@@ -1,0 +1,9 @@
+[package]
+name = "borealis"
+version = "0.1.0"
+authors = ["Philpax"]
+edition = "2018"
+
+[dependencies]
+i2cdev = "0.4"
+rand = "0.6"
