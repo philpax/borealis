@@ -4,9 +4,66 @@ use i2cdev::core::*;
 use i2cdev::linux::{LinuxI2CDevice, LinuxI2CError};
 
 use std::env;
+use std::error;
+use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug)]
+enum AuraError {
+    I2CError(LinuxI2CError),
+    IOError(io::Error),
+    Other(String),
+}
+
+impl AuraError {
+    fn other(s: &str) -> AuraError {
+        AuraError::Other(s.to_owned())
+    }
+}
+
+impl fmt::Display for AuraError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            AuraError::I2CError(ref e) => e.fmt(f),
+            AuraError::IOError(ref e) => e.fmt(f),
+            AuraError::Other(ref s) => write!(f, "aura error: {}", &s),
+        }
+    }
+}
+
+impl error::Error for AuraError {
+    fn description(&self) -> &str {
+        match *self {
+            AuraError::I2CError(ref e) => e.description(),
+            AuraError::IOError(ref e) => e.description(),
+            AuraError::Other(ref s) => &s,
+        }
+    }
+
+    fn cause(&self) -> Option<&error::Error> {
+        match *self {
+            AuraError::I2CError(ref e) => Some(e),
+            AuraError::IOError(ref e) => Some(e),
+            AuraError::Other(_) => None,
+        }
+    }
+}
+
+impl From<LinuxI2CError> for AuraError {
+    fn from(err: LinuxI2CError) -> AuraError {
+        AuraError::I2CError(err)
+    }
+}
+
+impl From<io::Error> for AuraError {
+    fn from(err: io::Error) -> AuraError {
+        AuraError::IOError(err)
+    }
+}
+
+type AuraResult<T> = Result<T, AuraError>;
 
 fn find_smbus() -> io::Result<PathBuf> {
     #[allow(clippy::large_digit_groups)]
@@ -77,52 +134,46 @@ fn find_i2c_adapters<P: AsRef<Path>>(smbus_path: P) -> io::Result<Vec<I2CAdapter
     Ok(ret)
 }
 
+type I2CResult<T> = Result<T, LinuxI2CError>;
+
 struct Ec3572(LinuxI2CDevice);
 impl Ec3572 {
-    fn connect<P: AsRef<Path>>(i2c_path: P, address: u8) -> Option<Self> {
-        Some(Ec3572(
-            LinuxI2CDevice::new(i2c_path, u16::from(address)).ok()?,
-        ))
+    fn connect<P: AsRef<Path>>(i2c_path: P, address: u8) -> I2CResult<Self> {
+        Ok(Ec3572(LinuxI2CDevice::new(i2c_path, u16::from(address))?))
     }
 
     fn translate_register(register: u16) -> u16 {
         (0x8000 | register).swap_bytes()
     }
 
-    fn write_register(&mut self, register: u16) -> Result<(), LinuxI2CError> {
+    fn write_register(&mut self, register: u16) -> I2CResult<()> {
         self.0
             .smbus_write_word_data(0x00, Self::translate_register(register))
     }
 
-    fn read_register_byte(&mut self, register: u16) -> Option<u8> {
-        self.write_register(register).ok()?;
-        self.0.smbus_read_byte_data(0x81).ok()
+    fn read_register_byte(&mut self, register: u16) -> I2CResult<u8> {
+        self.write_register(register)?;
+        self.0.smbus_read_byte_data(0x81)
     }
 
-    fn write_register_byte(&mut self, register: u16, val: u8) -> Option<()> {
-        self.write_register(register).ok()?;
-        self.0.smbus_write_byte_data(0x01, val).ok()
+    fn write_register_byte(&mut self, register: u16, val: u8) -> I2CResult<()> {
+        self.write_register(register)?;
+        self.0.smbus_write_byte_data(0x01, val)
     }
 
-    fn set_colours(&mut self, register: u16, colours: &[u8]) -> Option<()> {
-        self.write_register(register).ok()?;
-        self.0.smbus_write_block_data(0x03, colours).ok()
+    fn set_colours(&mut self, register: u16, colours: &[u8]) -> I2CResult<()> {
+        self.write_register(register)?;
+        self.0.smbus_write_block_data(0x03, colours)
     }
 
-    fn identifier(&mut self) -> Option<String> {
+    fn identifier(&mut self) -> I2CResult<String> {
         use std::ffi::CStr;
-        self.0.smbus_write_word_data(0x00, 0x0010).ok()?;
-        return self
-            .0
-            .smbus_read_block_data(0x80 + 0x10)
-            .ok()
-            .and_then(|u| {
-                Some(
-                    unsafe { CStr::from_ptr(u.as_ptr() as *mut i8) }
-                        .to_string_lossy()
-                        .into_owned(),
-                )
-            });
+        self.0.smbus_write_word_data(0x00, 0x0010)?;
+        return self.0.smbus_read_block_data(0x80 + 0x10).and_then(|u| {
+            Ok(unsafe { CStr::from_ptr(u.as_ptr() as *mut i8) }
+                .to_string_lossy()
+                .into_owned())
+        });
     }
 }
 
@@ -147,7 +198,7 @@ impl AuraController {
     const LED_COUNT_BASE: u16 = 0xC8;
     const ASSERT_UPLOAD: u16 = 0xA0;
 
-    fn connect<P: AsRef<Path>>(name: &str, i2c_path: P, address: u8) -> Option<Self> {
+    fn connect<P: AsRef<Path>>(name: &str, i2c_path: P, address: u8) -> AuraResult<Self> {
         let name = name.to_string();
         let mut ec3572 = Ec3572::connect(i2c_path, address)?;
 
@@ -168,10 +219,10 @@ impl AuraController {
         };
         controller.initialize()?;
 
-        Some(controller)
+        Ok(controller)
     }
 
-    fn initialize(&mut self) -> Option<()> {
+    fn initialize(&mut self) -> AuraResult<()> {
         // Find number of LEDs.
         let register_count = self.register_count()? as u16;
         for i in 0..register_count {
@@ -194,22 +245,22 @@ impl AuraController {
             self.name, self.identifier, self.total_led_count, self.controller_type
         );
 
-        Some(())
+        Ok(())
     }
 
-    fn register_count(&mut self) -> Option<u8> {
-        self.ec3572
-            .read_register_byte(AuraController::REGISTER_COUNT)
+    fn register_count(&mut self) -> AuraResult<u8> {
+        Ok(self
+            .ec3572
+            .read_register_byte(AuraController::REGISTER_COUNT)?)
     }
 
     fn total_led_count(&self) -> usize {
         self.total_led_count
     }
 
-    fn set_colours(&mut self, colours: &[u8]) -> Option<()> {
-        if colours.len() % 3 != 0 {
-            // TODO: Result would be nice here!
-            return None;
+    fn set_colours(&mut self, colours: &[u8]) -> AuraResult<()> {
+        if colours.len() != self.total_led_count() * 3 {
+            return Err(AuraError::other("invalid number of LEDs passed in!"));
         }
 
         let mut colours_swizzled = colours.to_vec();
@@ -223,12 +274,13 @@ impl AuraController {
             0x100
         };
         self.ec3572.set_colours(register, &colours_swizzled)?;
-        self.ec3572
-            .write_register_byte(AuraController::ASSERT_UPLOAD, 0x01)
+        Ok(self
+            .ec3572
+            .write_register_byte(AuraController::ASSERT_UPLOAD, 0x01)?)
     }
 }
 
-fn main() -> io::Result<()> {
+fn main() -> AuraResult<()> {
     const AMD_SMBUS_PORT_BASE_ADDRESS: u32 = 0xB00;
     const AMD_AURA_PORT_BASE_ADDRESS: u32 = 0xB20;
 
@@ -283,7 +335,7 @@ fn main() -> io::Result<()> {
             .cycle()
             .take(controller.total_led_count() * 3)
             .collect();
-        controller.set_colours(&colours);
+        controller.set_colours(&colours)?;
     }
 
     Ok(())
