@@ -8,6 +8,60 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[rustfmt::skip]
+const H: [u8; 4 * 5] = [
+    1, 0, 0, 1,
+    1, 0, 0, 1,
+    1, 1, 1, 1,
+    1, 0, 0, 1,
+    1, 0, 0, 1
+];
+
+#[rustfmt::skip]
+const E: [u8; 4 * 5] = [
+    1, 1, 1, 1,
+    1, 0, 0, 0,
+    1, 1, 1, 0,
+    1, 0, 0, 0,
+    1, 1, 1, 1
+];
+
+#[rustfmt::skip]
+const L: [u8; 4 * 5] = [
+    1, 0, 0, 0,
+    1, 0, 0, 0,
+    1, 0, 0, 0,
+    1, 0, 0, 0,
+    1, 1, 1, 1
+];
+
+#[rustfmt::skip]
+const O: [u8; 4 * 5] = [
+    0, 1, 1, 0,
+    1, 0, 0, 1,
+    1, 0, 0, 1,
+    1, 0, 0, 1,
+    0, 1, 1, 0
+];
+
+#[rustfmt::skip]
+const BLANK: [u8; 4 * 5] = [
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0
+];
+
+#[rustfmt::skip]
+const EXCLAMATION: [u8; 4 * 5] = [
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+    1, 1, 1, 1
+];
+
 fn find_smbus() -> io::Result<PathBuf> {
     #[allow(clippy::large_digit_groups)]
     const SMBUS_CLASS: u32 = 0x000_c0500;
@@ -284,6 +338,99 @@ fn main() -> io::Result<()> {
             .take(controller.total_led_count() * 3)
             .collect();
         controller.set_colours(&colours);
+    }
+
+    let remap_x = [2, 3, 1, 0];
+    let sequence = [
+        H,
+        BLANK,
+        E,
+        BLANK,
+        L,
+        BLANK,
+        L,
+        BLANK,
+        O,
+        BLANK,
+        EXCLAMATION,
+    ];
+    let mut sequence_index = 0;
+    loop {
+        use std::thread;
+        use std::time;
+        let letter = sequence[sequence_index];
+
+        for (idx, controller) in controllers.iter_mut().enumerate() {
+            let mut colours: Vec<u8> = vec![];
+            if idx < 4 {
+                for j in 0..5 {
+                    let j = if idx < 2 { j } else { 4 - j };
+                    let on = letter[j * 4 + remap_x[idx]] == 1;
+                    if letter != BLANK && letter != EXCLAMATION {
+                        if on {
+                            colours.push(255);
+                            colours.push(255);
+                            colours.push(255);
+                        } else {
+                            colours.push(100);
+                            colours.push(0);
+                            colours.push(0);
+                        }
+                    } else {
+                        colours.push(0);
+                        colours.push(0);
+                        colours.push(0);
+                    }
+                }
+            } else {
+                if letter == EXCLAMATION {
+                    colours.push(0);
+                    colours.push(0);
+                    colours.push(0);
+
+                    colours.push(0);
+                    colours.push(0);
+                    colours.push(0);
+
+                    colours.push(0);
+                    colours.push(0);
+                    colours.push(0);
+
+                    colours.push(0);
+                    colours.push(0);
+                    colours.push(0);
+
+                    colours.push(0);
+                    colours.push(0);
+                    colours.push(0);
+
+                    colours.push(0);
+                    colours.push(0);
+                    colours.push(0);
+
+                    colours.push(255);
+                    colours.push(255);
+                    colours.push(255);
+                } else {
+                    for j in 0..controller.total_led_count() {
+                        colours.push(0);
+                        colours.push(0);
+                        colours.push(0);
+                    }
+                }
+            }
+
+            controller.set_colours(&colours);
+        }
+
+        thread::sleep(time::Duration::from_millis(if letter == BLANK {
+            250
+        } else if letter == EXCLAMATION {
+            2000
+        } else {
+            1000
+        }));
+        sequence_index = (sequence_index + 1) % sequence.len();
     }
 
     Ok(())
