@@ -9,10 +9,10 @@ over LED lighting on the motherboard and RAM (e.g. G.Skill Trident Z RGB).
 It may support additional forms of lighting, including Aura-enabled GPUs
 and input peripherals, in the future.
 
-Borealis has only been tested on my personal workstation (X399 Strix-E, 
-4x G.Skill Trident Z RGB, Lian Li Bora Lite fans), and makes certain
-assumptions about where to locate resources. While these should be valid
-across similar systems to mine, I have not tested them, and I make _no
+Borealis has only been tested on my personal workstation (Arch Linux,
+X399 Strix-E, 4x G.Skill Trident Z RGB, Lian Li Bora Lite fans), and makes 
+certain assumptions about where to locate resources. While these should be 
+valid across similar systems to mine, I have not tested them, and I make _no
 guarantees_. I'm not responsible for your computer blowing up, but I'm
 happy to help get it working if it's within my purview.
 
@@ -25,6 +25,11 @@ repository, and run `cargo build` within the directory to produce binaries.
 
 Currently, Borealis only supports setting all LEDs to a given colour. This
 interface will be extended in future to provide for additional control.
+
+As Borealis uses Linux's I2C interface, you will need to ensure that this
+has been loaded. To do so temporarily, you can use `modprobe i2c-dev`;
+for extended use, consider having the module 
+[automatically loaded](https://wiki.archlinux.org/index.php/Kernel_module).
 
 To run Borealis, use `cargo run` or run the binary built by `cargo build`.
 Arguments are a RGB triplet - that is,
