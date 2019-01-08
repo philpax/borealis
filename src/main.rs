@@ -3,6 +3,7 @@ extern crate i2cdev;
 use i2cdev::core::*;
 use i2cdev::linux::LinuxI2CDevice;
 
+use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -175,7 +176,12 @@ impl AuraController {
             return None;
         }
 
-        self.ec3572.set_colours(&colours)?;
+        let mut colours_swizzled = colours.to_vec();
+        for i in 0..colours_swizzled.len()/3 {
+            colours_swizzled.swap(3 * i + 1, 3 * i + 2);
+        }
+
+        self.ec3572.set_colours(&colours_swizzled)?;
         self.ec3572
             .write_register_byte(AuraController::ASSERT_UPLOAD, 0x01)
     }
@@ -190,6 +196,16 @@ fn main() -> io::Result<()> {
     const AURA_TRIDENT_Z_ADDR_3: u8 = 0x73;
     const AURA_TRIDENT_Z_ADDR_4: u8 = 0x74;
     const AURA_MB_ADDR: u8 = 0x4E;
+
+    let args: Vec<String> = env::args().skip(1).take(3).collect();
+    if args.len() != 3 {
+        panic!("borealis r g b");
+    }
+
+    let mut cols = [0; 3];
+    for (idx, arg) in args.iter().enumerate() {
+        cols[idx] = arg.parse().expect("expected integer when parsing arguments");
+    }
 
     let smbus_path = find_smbus()?;
     println!("smbus: {}", smbus_path.to_string_lossy());
@@ -218,7 +234,7 @@ fn main() -> io::Result<()> {
     // point to additional Ec3572 ports; would then need to translate that into I2C)
 
     for controller in controllers.iter_mut() {
-        let colours: Vec<u8> = vec![127; controller.total_led_count() * 3];
+        let colours: Vec<u8> = cols.iter().cloned().cycle().take(controller.total_led_count() * 3).collect();
         controller.set_colours(&colours);
     }
 
