@@ -1,7 +1,7 @@
 extern crate i2cdev;
 
 use i2cdev::core::*;
-use i2cdev::linux::LinuxI2CDevice;
+use i2cdev::linux::{LinuxI2CDevice, LinuxI2CError};
 
 use std::env;
 use std::fs;
@@ -85,34 +85,57 @@ impl Ec3572 {
         ))
     }
 
-    fn translate_register(register: u8) -> u16 {
-        (u16::from(register) << 8) | 0x0080
+    fn translate_register(register: u16) -> u16 {
+        (0x8000 | register).swap_bytes()
     }
 
-    fn read_register_byte(&mut self, register: u8) -> Option<u8> {
+    fn write_register(&mut self, register: u16) -> Result<(), LinuxI2CError> {
         self.0
             .smbus_write_word_data(0x00, Self::translate_register(register))
-            .ok()?;
+    }
+
+    fn read_register_byte(&mut self, register: u16) -> Option<u8> {
+        self.write_register(register).ok()?;
         self.0.smbus_read_byte_data(0x81).ok()
     }
 
-    fn write_register_byte(&mut self, register: u8, val: u8) -> Option<()> {
-        self.0
-            .smbus_write_word_data(0x00, Self::translate_register(register))
-            .ok()?;
+    fn write_register_byte(&mut self, register: u16, val: u8) -> Option<()> {
+        self.write_register(register).ok()?;
         self.0.smbus_write_byte_data(0x01, val).ok()
     }
 
-    fn set_colours(&mut self, colours: &[u8]) -> Option<()> {
-        self.0
-            .smbus_write_word_data(0x00, Self::translate_register(0))
-            .ok()?;
+    fn set_colours(&mut self, register: u16, colours: &[u8]) -> Option<()> {
+        self.write_register(register).ok()?;
         self.0.smbus_write_block_data(0x03, colours).ok()
     }
+
+    fn identifier(&mut self) -> Option<String> {
+        use std::ffi::CStr;
+        self.0.smbus_write_word_data(0x00, 0x0010).ok()?;
+        return self
+            .0
+            .smbus_read_block_data(0x80 + 0x10)
+            .ok()
+            .and_then(|u| {
+                Some(
+                    unsafe { CStr::from_ptr(u.as_ptr() as *mut i8) }
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            });
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum AuraControllerType {
+    Other,
+    AuraMB,
 }
 
 struct AuraController {
     name: String,
+    identifier: String,
+    controller_type: AuraControllerType,
     ec3572: Ec3572,
     led_counts: Vec<usize>,
     total_led_count: usize,
@@ -120,16 +143,25 @@ struct AuraController {
 
 impl AuraController {
     // Registers
-    const REGISTER_COUNT: u8 = 0xC1;
-    const LED_COUNT_BASE: u8 = 0xC8;
-    const ASSERT_UPLOAD: u8 = 0xA0;
+    const REGISTER_COUNT: u16 = 0xC1;
+    const LED_COUNT_BASE: u16 = 0xC8;
+    const ASSERT_UPLOAD: u16 = 0xA0;
 
     fn connect<P: AsRef<Path>>(name: &str, i2c_path: P, address: u8) -> Option<Self> {
         let name = name.to_string();
-        let ec3572 = Ec3572::connect(i2c_path, address)?;
+        let mut ec3572 = Ec3572::connect(i2c_path, address)?;
+
+        let identifier = ec3572.identifier()?;
+        let controller_type = if identifier.starts_with("AUMA0-E6K5") {
+            AuraControllerType::AuraMB
+        } else {
+            AuraControllerType::Other
+        };
 
         let mut controller = AuraController {
             name,
+            identifier,
+            controller_type,
             ec3572,
             led_counts: vec![],
             total_led_count: 0,
@@ -141,7 +173,7 @@ impl AuraController {
 
     fn initialize(&mut self) -> Option<()> {
         // Find number of LEDs.
-        let register_count = self.register_count()?;
+        let register_count = self.register_count()? as u16;
         for i in 0..register_count {
             let led_count = self
                 .ec3572
@@ -151,12 +183,16 @@ impl AuraController {
             self.total_led_count += led_count & 0xF;
         }
 
-        println!("{}: total led count {}", self.name, self.total_led_count);
-
         // Initialize in static mode.
         self.ec3572.write_register_byte(0x20, 0x01)?;
         self.ec3572.write_register_byte(0x21, 0x0F)?;
         self.ec3572.write_register_byte(0x25, 0xFF)?;
+
+        // Output info.
+        println!(
+            "{}: identifier {}, total LED count {}, type {:?}",
+            self.name, self.identifier, self.total_led_count, self.controller_type
+        );
 
         Some(())
     }
@@ -177,11 +213,16 @@ impl AuraController {
         }
 
         let mut colours_swizzled = colours.to_vec();
-        for i in 0..colours_swizzled.len()/3 {
+        for i in 0..colours_swizzled.len() / 3 {
             colours_swizzled.swap(3 * i + 1, 3 * i + 2);
         }
 
-        self.ec3572.set_colours(&colours_swizzled)?;
+        let register = if self.controller_type == AuraControllerType::Other {
+            0x0
+        } else {
+            0x100
+        };
+        self.ec3572.set_colours(register, &colours_swizzled)?;
         self.ec3572
             .write_register_byte(AuraController::ASSERT_UPLOAD, 0x01)
     }
@@ -204,7 +245,9 @@ fn main() -> io::Result<()> {
 
     let mut cols = [0; 3];
     for (idx, arg) in args.iter().enumerate() {
-        cols[idx] = arg.parse().expect("expected integer when parsing arguments");
+        cols[idx] = arg
+            .parse()
+            .expect("expected integer when parsing arguments");
     }
 
     let smbus_path = find_smbus()?;
@@ -234,7 +277,12 @@ fn main() -> io::Result<()> {
     // point to additional Ec3572 ports; would then need to translate that into I2C)
 
     for controller in controllers.iter_mut() {
-        let colours: Vec<u8> = cols.iter().cloned().cycle().take(controller.total_led_count() * 3).collect();
+        let colours: Vec<u8> = cols
+            .iter()
+            .cloned()
+            .cycle()
+            .take(controller.total_led_count() * 3)
+            .collect();
         controller.set_colours(&colours);
     }
 
