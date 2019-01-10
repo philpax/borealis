@@ -16,10 +16,9 @@ fn main() -> AuraResult<()> {
     const AMD_SMBUS_PORT_BASE_ADDRESS: u32 = 0xB00;
     const AMD_AURA_PORT_BASE_ADDRESS: u32 = 0xB20;
 
-    const AURA_TRIDENT_Z_ADDR_1: u8 = 0x70;
-    const AURA_TRIDENT_Z_ADDR_2: u8 = 0x71;
-    const AURA_TRIDENT_Z_ADDR_3: u8 = 0x73;
-    const AURA_TRIDENT_Z_ADDR_4: u8 = 0x74;
+    const AURA_TRIDENT_Z_GLOBAL: u8 = 0x77;
+    // The last four are unverified. I've only tested with 4 RAM sticks.
+    const AURA_TRIDENT_Z_ADDRS: [u8; 8] = [0x70, 0x71, 0x73, 0x74, 0x72, 0x75, 0x76, 0x77];
     const AURA_MB_ADDR: u8 = 0x4E;
 
     let args: Vec<String> = env::args().skip(1).take(3).collect();
@@ -48,12 +47,32 @@ fn main() -> AuraResult<()> {
     println!("i2c-aux: {}", i2c_aux.path.to_string_lossy());
 
     let mut controllers = vec![
-        AuraController::connect("RAM1", &i2c_sys.path, AURA_TRIDENT_Z_ADDR_1).unwrap(),
-        AuraController::connect("RAM2", &i2c_sys.path, AURA_TRIDENT_Z_ADDR_2).unwrap(),
-        AuraController::connect("RAM3", &i2c_sys.path, AURA_TRIDENT_Z_ADDR_3).unwrap(),
-        AuraController::connect("RAM4", &i2c_sys.path, AURA_TRIDENT_Z_ADDR_4).unwrap(),
         AuraController::connect("MB", &i2c_aux.path, AURA_MB_ADDR).unwrap(),
     ];
+
+    let enabled_sticks = 4;
+    if let Ok(mut ram_controller) = AuraController::connect("RAMG", &i2c_sys.path, AURA_TRIDENT_Z_GLOBAL) {
+        const RAM_ENABLE_COMMANDS: [u8; 8] = [0xE0, 0xE2, 0xE6, 0xE8, 0xEA, 0xEC, 0x9E, 0xCC];
+
+        for i in 3..4 {
+            //ram_controller.write_register_byte(0xF8, AURA_TRIDENT_Z_ADDRS[i] - 0x70)?;
+            ram_controller.write_register_byte(0xF8, 0x77)?;
+            ram_controller.write_register_byte(0xF9, RAM_ENABLE_COMMANDS[i])?;
+        }
+
+        controllers.push(ram_controller);
+    }
+/*
+    for i in 0..enabled_sticks {
+        let a = AURA_TRIDENT_Z_ADDRS[i];
+        if !(a == 0x71 || a == 0x73) {
+            continue;
+        }
+        controllers.push(
+            AuraController::connect(&format!("RAM{}", i), &i2c_sys.path, AURA_TRIDENT_Z_ADDRS[i])?
+        );
+    }
+*/
 
     for controller in controllers.iter_mut() {
         let colours: Vec<u8> = iter::repeat(&cols)

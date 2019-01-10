@@ -109,8 +109,13 @@ impl AuraController {
         self.write_register(register)?;
         Ok(self.smbus.smbus_read_byte_data(0x81)?)
     }
+    
+    pub fn read_register_short(&mut self, register: u16) -> AuraResult<u16> {
+        self.write_register(register)?;
+        Ok(self.smbus.smbus_read_word_data(0x81)?)
+    }
 
-    fn write_register_byte(&mut self, register: u16, val: u8) -> AuraResult<()> {
+    pub fn write_register_byte(&mut self, register: u16, val: u8) -> AuraResult<()> {
         self.write_register(register)?;
         Ok(self.smbus.smbus_write_byte_data(0x01, val)?)
     }
