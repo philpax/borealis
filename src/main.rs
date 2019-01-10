@@ -16,10 +16,8 @@ fn main() -> AuraResult<()> {
     const AMD_SMBUS_PORT_BASE_ADDRESS: u32 = 0xB00;
     const AMD_AURA_PORT_BASE_ADDRESS: u32 = 0xB20;
 
-    const AURA_TRIDENT_Z_ADDR_1: u8 = 0x70;
-    const AURA_TRIDENT_Z_ADDR_2: u8 = 0x71;
-    const AURA_TRIDENT_Z_ADDR_3: u8 = 0x73;
-    const AURA_TRIDENT_Z_ADDR_4: u8 = 0x74;
+    const AURA_TRIDENT_Z_START: u8 = 0x70;
+    const AURA_TRIDENT_Z_END: u8 = 0x77;
     const AURA_MB_ADDR: u8 = 0x4E;
 
     let args: Vec<String> = env::args().skip(1).take(3).collect();
@@ -48,12 +46,14 @@ fn main() -> AuraResult<()> {
     println!("i2c-aux: {}", i2c_aux.path.to_string_lossy());
 
     let mut controllers = vec![
-        AuraController::connect("RAM1", &i2c_sys.path, AURA_TRIDENT_Z_ADDR_1).unwrap(),
-        AuraController::connect("RAM2", &i2c_sys.path, AURA_TRIDENT_Z_ADDR_2).unwrap(),
-        AuraController::connect("RAM3", &i2c_sys.path, AURA_TRIDENT_Z_ADDR_3).unwrap(),
-        AuraController::connect("RAM4", &i2c_sys.path, AURA_TRIDENT_Z_ADDR_4).unwrap(),
-        AuraController::connect("MB", &i2c_aux.path, AURA_MB_ADDR).unwrap(),
+        AuraController::connect("MB", &i2c_aux.path, AURA_MB_ADDR).expect("Can't connect to Aura MB controller. If using an AMD system, have you applied the kernel patch?"),
     ];
+
+    for addr in AURA_TRIDENT_Z_START..=AURA_TRIDENT_Z_END {
+        if let Ok(controller) = AuraController::connect(&format!("RAM{:x}", addr), &i2c_sys.path, addr) {
+            controllers.push(controller);
+        }
+    }
 
     for controller in controllers.iter_mut() {
         let colours: Vec<u8> = iter::repeat(&cols)
