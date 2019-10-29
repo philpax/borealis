@@ -36,7 +36,7 @@ impl error::Error for AuraError {
         }
     }
 
-    fn cause(&self) -> Option<&error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
             AuraError::I2CError(ref e) => Some(e),
             AuraError::IOError(ref e) => Some(e),
