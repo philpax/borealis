@@ -136,4 +136,8 @@ impl AuraController {
                     .into_owned())
             })?)
     }
+
+    pub fn name(&mut self) -> &str {
+        &self.name
+    }
 }
