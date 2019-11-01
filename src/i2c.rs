@@ -50,6 +50,12 @@ pub fn find_i2c_adapters<P: AsRef<Path>>(smbus_path: P) -> io::Result<Vec<I2CAda
         let name_buf = fs::read(name_path)?;
         let name_str = String::from_utf8_lossy(&name_buf);
         let name_components: Vec<_> = name_str.trim().split(' ').collect();
+
+        let adapter_type = name_components[1];
+        if adapter_type != "PIIX4" {
+            continue;
+        }
+
         let port: u8 = name_components[name_components.len() - 3]
             .parse()
             .expect("failed to parse port");
