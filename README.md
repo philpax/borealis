@@ -1,5 +1,7 @@
 # Borealis
 
+**NOTE**: This is not being actively developed. If you are looking for a RGB solution, I suggest [OpenRGB](https://gitlab.com/CalcProgrammer1/OpenRGB).
+
 Borealis is an Asus Aura Sync driver application for Linux. It can set
 your peripherals' RGB lighting without the use of the Windows Aura application.
 
